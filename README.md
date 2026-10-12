@@ -62,7 +62,15 @@ HACS adds the dashboard resource for you and will offer updates when new version
 
 ### Updating
 
-Update from **Settings → Updates** or from HACS. Once the update has installed, the card shows **"Updated to …"** with a **Refresh** button. Press it to load the new version; no Home Assistant restart is needed. In the companion app, if a refresh isn't enough, use **Settings → Companion app → Debugging → Reset frontend cache**.
+Update from **Settings → Updates** or from HACS. Once the update has installed, the card shows **"Updated to …"** with a **Refresh** button. Press it rather than refreshing the page yourself: it makes the browser download the new card file instead of reusing its cached copy.
+
+If the card still shows the old version:
+
+- In a desktop browser, do a hard refresh with **Ctrl+Shift+R** (**Cmd+Shift+R** on a Mac).
+- In the companion app, go to **Settings → Companion app → Debugging → Reset frontend cache**.
+- If neither works, restart Home Assistant.
+
+If the card says **"This card is installed twice"**, an old copy from a manual install is still loading. Go to **Settings → Dashboards → ⋮ → Resources** and delete the `/local/dreame-d10s-card.js` entry, keeping the `/hacsfiles/…` one.
 
 HACS checks for new versions every few hours. To see a new release sooner, restart Home Assistant, or open the card in HACS and choose **⋮ → Redownload**.
 

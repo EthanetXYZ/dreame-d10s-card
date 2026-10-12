@@ -4,9 +4,12 @@
  * Independent implementation; not affiliated with the official Dreame Vacuum Card.
  */
 
-const CARD_VERSION = "1.2.2";
+const CARD_VERSION = "1.2.3";
 
 // 1.10.0 > 1.9.3; leading "v" ignored
+// where this file was loaded from (HACS adds ?hacstag=…), used to refresh the cached copy
+const SCRIPT_URL = import.meta.url;
+
 const cmpVersion = (a, b) => {
   const pa = String(a || "").replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
   const pb = String(b || "").replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
@@ -1810,9 +1813,38 @@ class DreameD10sCard extends HTMLElement {
 
   // After HACS installs a new version the browser keeps running the old file until it reloads.
   _updateBanner() {
+    const copies = window.__dreameD10sCopies;
+    if (copies)
+      return [
+        "warn",
+        "mdi:content-duplicate",
+        "This card is installed twice",
+        `Running ${CARD_VERSION}; also found ${copies.filter((v) => v !== CARD_VERSION).join(", ") || "another copy"}. Remove the old /local/dreame-d10s-card.js entry under Settings → Dashboards → Resources.`,
+        "resources",
+        "Fix",
+      ];
     const installed = this._hacsUpdate?.attributes?.installed_version;
     if (!installed || cmpVersion(installed, CARD_VERSION) <= 0) return null;
     return ["info", "mdi:refresh", `Updated to ${installed.replace(/^v/i, "")}`, "Refresh the page to finish updating", "reload", "Refresh"];
+  }
+
+  // A plain reload can come back with the old card file from the browser cache, so fetch the
+  // file again (bypassing the cache) and clear any service-worker copies before reloading.
+  async _hardReload() {
+    this._toast("Loading the new version…");
+    try {
+      const urls = [SCRIPT_URL, SCRIPT_URL.split("?")[0]];
+      await Promise.all(urls.map((u) => fetch(u, { cache: "reload", credentials: "same-origin" }).catch(() => {})));
+      if (window.caches) {
+        for (const key of await caches.keys()) {
+          const cache = await caches.open(key);
+          for (const req of await cache.keys()) if (/dreame-d10s-card/.test(req.url)) await cache.delete(req);
+        }
+      }
+    } catch (e) {
+      /* fall through to a normal reload */
+    }
+    location.reload();
   }
 
   _mapHtml() {
@@ -2528,7 +2560,12 @@ class DreameD10sCard extends HTMLElement {
       case "banner": {
         const target = el.dataset.target;
         if (target === "fp-off") return this._setFloorPlan(false);
-        if (target === "reload") return location.reload();
+        if (target === "reload") return this._hardReload();
+        if (target === "resources") {
+          // HA's own in-app navigation
+          history.pushState(null, "", "/config/lovelace/resources");
+          return window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+        }
         if (target.startsWith("sheet:")) {
           this._sheet = target.slice(6);
           return this._render(true);
@@ -2654,14 +2691,24 @@ class DreameD10sCard extends HTMLElement {
   }
 }
 
-customElements.define("dreame-d10s-card", DreameD10sCard);
-
-window.customCards = window.customCards || [];
-window.customCards.push({
-  type: "dreame-d10s-card",
-  name: "Dreame D10S Card",
-  description: "Map, room/zone/spot cleaning, map editor and settings for the Dreame D10S (dreame_vacuum integration).",
-  preview: false,
-});
-
-console.info(`%c DREAME-D10S-CARD %c v${CARD_VERSION} `, "background:#1ea0d7;color:#fff;font-weight:700", "background:#333;color:#fff");
+// A second copy (e.g. an old manual /local install next to the HACS one) can't redefine the element,
+// and whichever loaded first wins. Remember it so the running card can say so.
+const existing = customElements.get("dreame-d10s-card");
+if (existing) {
+  window.__dreameD10sCopies = [...(window.__dreameD10sCopies || [existing.version || "older"]), CARD_VERSION];
+  console.warn(
+    `Dreame D10S Card ${CARD_VERSION} was loaded twice (another copy is already running). ` +
+      "Remove the extra dashboard resource under Settings → Dashboards → Resources."
+  );
+} else {
+  DreameD10sCard.version = CARD_VERSION;
+  customElements.define("dreame-d10s-card", DreameD10sCard);
+  window.customCards = window.customCards || [];
+  window.customCards.push({
+    type: "dreame-d10s-card",
+    name: "Dreame D10S Card",
+    description: "Map, room/zone/spot cleaning, map editor and settings for the Dreame D10S (dreame_vacuum integration).",
+    preview: false,
+  });
+  console.info(`%c DREAME-D10S-CARD %c v${CARD_VERSION} `, "background:#1ea0d7;color:#fff;font-weight:700", "background:#333;color:#fff");
+}
