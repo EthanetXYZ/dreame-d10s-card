@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dreame D10S Card Demo</title>
+<style>
+  :root {
+    --primary-text-color: #e1e1e1;
+    --secondary-text-color: #9b9b9b;
+    --card-background-color: #1c1c1c;
+    --error-color: #db4437;
+  }
+  body { margin: 0; background: #111; color: #e1e1e1; font-family: Roboto, system-ui, sans-serif; }
+  main { display: grid; grid-template-columns: minmax(300px, 480px) minmax(260px, 1fr); gap: 16px; padding: 16px; max-width: 1100px; margin: 0 auto; }
+  main.panel { grid-template-columns: 1fr; max-width: 1200px; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  ha-card { display: block; border-radius: 12px; }
+  .panel { background: #1c1c1c; border-radius: 12px; padding: 12px 14px; font-size: 13px; }
+  .panel h2 { font-size: 14px; margin: 0 0 8px; font-weight: 500; }
+  .panel button { background: #2c2c2c; color: inherit; border: 0; border-radius: 8px; padding: 6px 10px; margin: 0 6px 6px 0; cursor: pointer; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: 11px; color: #9fd3ea; max-height: 360px; overflow: auto; margin: 0; }
+</style>
+</head>
+<body>
+<main>
+  <div id="card-host"></div>
+  <div class="panel">
+    <h2>Simulate</h2>
+    <button data-sim="docked">Docked</button>
+    <button data-sim="cleaning">Cleaning</button>
+    <button data-sim="paused">Paused</button>
+    <button data-sim="returning">Returning</button>
+    <button data-sim="error">Error</button>
+    <button data-sim="notank">No water tank</button>
+    <button data-sim="lowfilter">Worn filter</button>
+    <h2 style="margin-top:10px">Layout</h2>
+    <button data-layout="compact">Compact</button>
+    <button data-layout="panel">Panel</button>
+    <h2 style="margin-top:10px">Service calls</h2>
+    <pre id="log"></pre>
+  </div>
+</main>
+
+<script type="module">
+  // ---- minimal stand-ins for HA's ha-card / ha-icon ----
+  import * as mdi from "https://cdn.jsdelivr.net/npm/@mdi/js@7.4.47/+esm";
+  customElements.define("ha-card", class extends HTMLElement {});
+  customElements.define("ha-icon", class extends HTMLElement {
+    static get observedAttributes() { return ["icon"]; }
+    connectedCallback() { this._draw(); }
+    attributeChangedCallback() { this._draw(); }
+    _draw() {
+      const name = (this.getAttribute("icon") || "").replace("mdi:", "");
+      const key = "mdi" + name.split("-").map((p) => p[0].toUpperCase() + p.slice(1)).join("");
+      const path = mdi[key] || mdi.mdiHelpCircleOutline;
+      const size = "var(--mdc-icon-size, 24px)";
+      this.style.display = "inline-flex";
+      this.innerHTML = `<svg viewBox="0 0 24 24" style="width:${size};height:${size};fill:currentColor"><path d="${path}"/></svg>`;
+    }
+  });
+
+  // ---- synthetic D10S map ----
+  const W = 600, H = 400;
+  const toPx = (x, y) => ({ x: 300 + (x - 1000) / 22, y: 200 - (y - 100) / 22 });
+  const rooms = {
+    1: { name: "Living Room", icon: "mdi:sofa-outline", x0: -5600, y0: -4200, x1: -800, y1: 4400, color: "#5b7f3a" },
+    2: { name: "Hallway", icon: "mdi:foot-print", x0: -800, y0: 800, x1: 4400, y1: 2400, color: "#2e55a8" },
+    3: { name: "Bathroom", icon: "mdi:toilet", x0: 600, y0: 2400, x1: 3600, y1: 4400, color: "#2f86c0" },
+    4: { name: "Kitchen", icon: "mdi:chef-hat", x0: -800, y0: -4200, x1: 1600, y1: 800, color: "#2f86c0" },
+    5: { name: "Bedroom", icon: "mdi:bed-king-outline", x0: 1600, y0: -4200, x1: 4400, y1: 800, color: "#8a7428" },
+    6: { name: "Office", icon: "mdi:monitor-shimmer", x0: 4400, y0: -4200, x1: 7600, y1: 2400, color: "#8a7428" },
+    7: { name: "Toilet", icon: "mdi:toilet", x0: 4400, y0: 2400, x1: 7600, y1: 4400, color: "#2e55a8" },
+  };
+  const palette = ["#5b7f3a", "#2e55a8", "#2f86c0", "#8a7428", "#7a4a8a", "#3a8a7a"];
+  const fixRoom = (id, r) => {
+    r.room_id = Number(id);
+    r.x = Math.round((r.x0 + r.x1) / 2);
+    r.y = Math.round((r.y0 + r.y1) / 2);
+  };
+  Object.entries(rooms).forEach(([id, r], i) => {
+    fixRoom(id, r);
+    Object.assign(r, { suction_level: 1, water_volume: 2, cleaning_times: 1, order: i + 1 });
+  });
+  // restricted areas in vacuum mm
+  let restricted = { walls: [[-800, -1800, -800, 200]], zones: [[2200, -3600, 3800, -1600]], no_mops: [[-5400, 1000, -4000, 3800]] };
+
+  function drawMap(robot) {
+    const c = document.createElement("canvas");
+    c.width = W; c.height = H;
+    const g = c.getContext("2d");
+    g.fillStyle = "#00000000"; g.fillRect(0, 0, W, H);
+    for (const r of Object.values(rooms)) {
+      const a = toPx(r.x0, r.y1), b = toPx(r.x1, r.y0);
+      g.fillStyle = r.color; g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+    // furniture blocks
+    g.fillStyle = "#c9c9c9aa";
+    [[-5200, 1000, -4200, 3600], [-3000, -3800, -1400, -2600], [2200, -3600, 3800, -1600], [5000, -3600, 6200, -2800]].forEach(([x0, y0, x1, y1]) => {
+      const a = toPx(x0, y1), b = toPx(x1, y0); g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    });
+    // walls
+    g.strokeStyle = "#3a3a3a"; g.lineWidth = 3;
+    for (const r of Object.values(rooms)) {
+      const a = toPx(r.x0, r.y1), b = toPx(r.x1, r.y0); g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    }
+    // restricted areas, rendered the way the integration's map does
+    const rect = ([x0, y0, x1, y1], fill, stroke) => {
+      const a = toPx(x0, y1), b = toPx(x1, y0);
+      g.fillStyle = fill; g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+      g.strokeStyle = stroke; g.lineWidth = 2; g.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    };
+    restricted.zones.forEach((z) => rect(z, "#e6343455", "#e63434"));
+    restricted.no_mops.forEach((z) => rect(z, "#4678ff55", "#4678ff"));
+    restricted.walls.forEach(([x0, y0, x1, y1]) => {
+      const a = toPx(x0, y0), b = toPx(x1, y1);
+      g.strokeStyle = "#e63434"; g.lineWidth = 3; g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    });
+    // charger
+    const ch = toPx(-5200, -3800);
+    g.fillStyle = "#3dd27a"; g.beginPath(); g.arc(ch.x, ch.y, 7, 0, 7); g.fill();
+    // robot
+    const rp = toPx(robot.x, robot.y);
+    g.fillStyle = "#fff"; g.strokeStyle = "#555"; g.lineWidth = 2;
+    g.beginPath(); g.arc(rp.x, rp.y, 9, 0, 7); g.fill(); g.stroke();
+    return c.toDataURL();
+  }
+
+  // ---- mock hass ----
+  const log = document.getElementById("log");
+  const base = "dreame_d10s";
+  const now = () => new Date().toISOString();
+  let robot = { x: -5000, y: -3600 };
+  const states = {};
+  const set = (id, state, attributes = {}) => {
+    states[id] = { entity_id: id, state: String(state), attributes: { ...(states[id]?.attributes || {}), ...attributes }, last_updated: now() };
+  };
+  const calibration_points = [0, 1000].flatMap((x) => [0, 1000].filter((y) => !(x && y)).map((y) => ({ vacuum: { x, y }, map: toPx(x, y) })));
+
+  set(`vacuum.${base}`, "docked", {
+    friendly_name: "Dreame D10S", battery_level: 100, current_segment: null, selected_map_id: 1,
+    maps: [
+      { id: 1, index: 1, name: "Ground Floor", custom_name: "Ground Floor", date: "2026-10-09T21:10:03" },
+      { id: 2, index: 2, name: "First Floor", custom_name: "First Floor", date: "2026-09-28T10:02:41" },
+    ],
+  });
+  const area = ([x0, y0, x1, y1]) => ({ x0, y0, x1, y1: y0, x2: x1, y2: y1, x3: x0, y3: y1 });
+  const obstacles = {
+    1: { x: -3400, y: -1200, type: "Cable", possibility: 87, ignore_status: "Not Ignored", room_id: 1, picture_status: "Upload Success" },
+    2: { x: 2600, y: 200, type: "Shoe", possibility: 72, ignore_status: "Not Ignored", room_id: 5, picture_status: "Upload Success" },
+    3: { x: 5600, y: -800, type: "Sock", possibility: 64, ignore_status: "Manually Ignored", room_id: 6, picture_status: "Upload Success" },
+  };
+  const furnitures = [
+    { x: -4700, y: 2300, x0: -5200, y0: 1000, width: 1000, height: 2600, type: "Sofa", angle: 0 },
+    { x: 3000, y: -2600, x0: 2200, y0: -3600, width: 1600, height: 2000, type: "Bed", angle: 0 },
+  ];
+  // a fake photo for each obstacle
+  const photo = (label, hue) => {
+    const c = document.createElement("canvas"); c.width = 320; c.height = 200;
+    const g = c.getContext("2d");
+    const grad = g.createLinearGradient(0, 0, 320, 200); grad.addColorStop(0, `hsl(${hue},30%,35%)`); grad.addColorStop(1, `hsl(${hue},30%,15%)`);
+    g.fillStyle = grad; g.fillRect(0, 0, 320, 200);
+    g.strokeStyle = "#ffb020"; g.lineWidth = 3; g.strokeRect(110, 60, 100, 80);
+    g.fillStyle = "#fff"; g.font = "16px sans-serif"; g.fillText(label, 118, 158);
+    return c.toDataURL();
+  };
+  const obstaclePics = Object.fromEntries(Object.entries(obstacles).map(([k, o], i) => [`${k}: ${o.type}`, `${photo(o.type, i * 90)}#?index=${k}&v=1`]));
+  const historyPics = {
+    "1: 10/12 09:14 - Sweeping And Mopping (Completed)": drawMap({ x: -5000, y: -3600 }),
+    "2: 10/11 18:02 - Sweeping (Completed)": drawMap({ x: 1200, y: -1400 }),
+    "3: 10/10 08:40 - Sweeping (Interrupted)": drawMap({ x: 5200, y: 1200 }),
+  };
+  const recoveryPics = {
+    "10/09/26 21:10:03: Map2 (Edited)": drawMap({ x: -5000, y: -3600 }) + "#?index=2&v=1",
+    "10/01/26 11:44:51: Map1 (Original)": drawMap({ x: -5000, y: -3600 }) + "#?index=1&v=1",
+  };
+  function refreshCamera() {
+    set(`camera.${base}_map`, "idle", {
+      entity_picture: drawMap(robot),
+      calibration_points,
+      map_id: 1,
+      rooms: JSON.parse(JSON.stringify(rooms)),
+      virtual_walls: restricted.walls.map(([x0, y0, x1, y1]) => ({ x0, y0, x1, y1 })),
+      no_go_areas: restricted.zones.map(area),
+      no_mopping_areas: restricted.no_mops.map(area),
+      obstacles,
+      // no furniture detection on the D10S
+      // the D10S has no camera, so no obstacle photos
+      cleaning_history_picture: historyPics,
+      recovery_map_picture: recoveryPics,
+    });
+    set(`camera.${base}_map_data`, "idle", { entity_picture: `/api/camera_proxy/camera.${base}_map_data?token=demo&t=${Date.now()}` });
+  }
+
+  // raw map data in the integration's JSON format, generated from the demo rooms
+  const GRID = 50, LEFT = -6000, TOP = -4600, GW = 280, GH = 190;
+  function mapDataJson() {
+    const data = {};
+    const add = (layer, x, y) => (data[layer] = data[layer] || []).push([x, y]);
+    const toGrid = (vx, vy) => [Math.floor((vx - LEFT) / GRID), Math.floor((vy - TOP) / GRID)];
+    for (let gy = 0; gy < GH; gy++)
+      for (let gx = 0; gx < GW; gx++) {
+        const vx = LEFT + gx * GRID + GRID / 2, vy = TOP + gy * GRID + GRID / 2;
+        let hit = null, edge = false;
+        for (const [id, r] of Object.entries(rooms)) {
+          if (vx >= r.x0 && vx < r.x1 && vy >= r.y0 && vy < r.y1) {
+            hit = id;
+            edge = vx - r.x0 < GRID || r.x1 - vx < GRID || vy - r.y0 < GRID || r.y1 - vy < GRID;
+          }
+        }
+        if (hit) add(edge ? 255 : Number(hit), gx, gy);
+      }
+    const rle = {};
+    for (const [layer, pts] of Object.entries(data)) {
+      pts.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+      const out = [];
+      let cur = null;
+      for (const [x, y] of pts) {
+        if (cur && cur[1] === y && cur[0] + cur[2] === x) cur[2]++;
+        else { if (cur) out.push(...cur); cur = [x, y, 1]; }
+      }
+      if (cur) out.push(...cur);
+      rle[layer] = out;
+    }
+    const path = [[1, -5000, -3600, -4000, -3600, -4000, -2000, -2400, -2000, -2400, 600, robot.x, robot.y]];
+    return {
+      data: rle,
+      size: [LEFT, TOP, LEFT, TOP, GW, GH, GRID, 0, [0, 0, 0, 0]],
+      segments: Object.entries(rooms).map(([id, r], i) => [Number(id), r.x, r.y, 0, null, 0, i % 4]),
+      robot_position: [Math.round(robot.x), Math.round(robot.y), 90],
+      charger_position: [-5200, -3800, 90],
+      path,
+      map_id: 1,
+    };
+  }
+  const realFetch = window.fetch;
+  window.fetch = (url, opts) =>
+    String(url).includes("/api/camera_map_data_proxy/")
+      ? Promise.resolve(new Response(JSON.stringify(mapDataJson()), { headers: { "Content-Type": "application/json" } }))
+      : realFetch(url, opts);
+  refreshCamera();
+  set(`sensor.${base}_status`, "charging_completed");
+  set(`sensor.${base}_error`, "no_error");
+  set(`sensor.${base}_battery_level`, 100, { icon: "mdi:battery-charging-100" });
+  set(`sensor.${base}_cleaned_area`, 56);
+  set(`sensor.${base}_cleaning_time`, 102);
+  set(`sensor.${base}_water_tank`, "installed");
+  set(`select.${base}_suction_level`, "standard", { options: ["quiet", "standard", "strong", "turbo"] });
+  set(`select.${base}_water_volume`, "medium", { options: ["low", "medium", "high"] });
+  set(`select.${base}_cleaning_mode`, "sweeping_and_mopping", { options: ["sweeping", "mopping", "sweeping_and_mopping"] });
+  set(`select.${base}_selected_map`, "Ground Floor", { options: ["Ground Floor", "First Floor"] });
+  [["main_brush", 82, 246], ["side_brush", 64, 128], ["filter", 7, 11], ["sensor_dirty", 40, 12], ["mop_pad", 55, 44]].forEach(([k, p, h]) => {
+    set(`sensor.${base}_${k}_left`, p);
+    set(`sensor.${base}_${k}_time_left`, h);
+  });
+  set(`switch.${base}_carpet_boost`, "on");
+  set(`switch.${base}_resume_cleaning`, "on");
+  set(`switch.${base}_obstacle_avoidance`, "on");
+  set(`switch.${base}_child_lock`, "off");
+  set(`switch.${base}_customized_cleaning`, "off");
+  set(`switch.${base}_dnd`, "on", { icon: "mdi:minus-circle-off-outline" });
+  set(`time.${base}_dnd_start`, "22:00:00", { icon: "mdi:clock-start" });
+  set(`time.${base}_dnd_end`, "08:00:00", { icon: "mdi:clock-end" });
+  set(`number.${base}_volume`, 60, { min: 0, max: 100, step: 1, unit_of_measurement: "%", icon: "mdi:volume-high" });
+  set(`select.${base}_voice_assistant_language`, "english", { options: ["english", "german", "french"], icon: "mdi:translate" });
+  set(`button.${base}_start_fast_mapping`, "unknown", { icon: "mdi:map-plus" });
+  set(`button.${base}_reset_filter`, "unknown", { icon: "mdi:air-filter" });
+  set(`sensor.${base}_cleaning_count`, 214);
+  set(`sensor.${base}_total_cleaned_area`, 9350);
+  set(`sensor.${base}_total_cleaning_time`, 15720);
+  set(`sensor.${base}_first_cleaning_date`, "2025-03-02");
+  set(`sensor.${base}_wifi_signal`, -52, { unit_of_measurement: "dBm" });
+
+  const statusFor = { docked: "charging_completed", cleaning: "sweeping_and_mopping", paused: "paused", returning: "returning", error: "error" };
+  function setVac(state) {
+    set(`vacuum.${base}`, state);
+    set(`sensor.${base}_status`, statusFor[state] || state);
+    set(`sensor.${base}_error`, state === "error" ? "wheels_are_suspended" : "no_error");
+  }
+
+  let timer;
+  const card = document.createElement("dreame-d10s-card");
+  const category = (id) =>
+    /_(dnd|volume|voice|time|child_lock|carpet|resume|obstacle|customized)/.test(id) ? "config" : /_(wifi|first_cleaning|cleaning_count|total_)/.test(id) ? "diagnostic" : null;
+  const hass = () => ({
+    states: { ...states },
+    entities: Object.fromEntries(
+      Object.keys(states).map((id) => [id, { entity_id: id, device_id: "dev1", entity_category: category(id) }])
+    ),
+    formatEntityState: (s, v) => (v ?? s.state).replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase()),
+    callService: async (domain, service, data) => {
+      log.textContent = `${new Date().toLocaleTimeString()}  ${domain}.${service} ${JSON.stringify(data)}\n` + log.textContent;
+      if (domain === "vacuum" && service === "start") setVac("cleaning");
+      if (domain === "dreame_vacuum" && service.startsWith("vacuum_clean_")) setVac("cleaning");
+      if (service === "pause") setVac("paused");
+      if (service === "stop") setVac("docked");
+      if (service === "return_to_base") {
+        setVac("returning");
+        clearTimeout(timer);
+        timer = setTimeout(() => { robot = { x: -5000, y: -3600 }; refreshCamera(); setVac("docked"); push(); }, 4000);
+      }
+      if (domain === "select") set(data.entity_id, data.option);
+      if (service === "vacuum_set_obstacle_ignore") {
+        const o = Object.values(obstacles).find((o) => o.x === data.x && o.y === data.y);
+        if (o) o.ignore_status = data.obstacle_ignored ? "Manually Ignored" : "Not Ignored";
+        refreshCamera();
+      }
+      if (service === "vacuum_set_segment_type") {
+        const types = { 0: ["Room", "mdi:home-outline"], 1: ["Living Room", "mdi:sofa-outline"], 2: ["Primary Bedroom", "mdi:bed-king-outline"], 4: ["Kitchen", "mdi:chef-hat"], 6: ["Bathroom", "mdi:toilet"], 12: ["Office", "mdi:monitor-shimmer"] };
+        for (const [id, [code]] of Object.entries(data.type)) {
+          const [name, icon] = types[code] || ["Room", "mdi:home-outline"];
+          Object.assign(rooms[id], { type: code, icon, ...(code ? { name } : {}) });
+        }
+        refreshCamera();
+      }
+      if (service === "vacuum_rename_map" || service === "vacuum_select_map" || service === "vacuum_delete_map") {
+        const v = states[`vacuum.${base}`].attributes;
+        let maps = v.maps.map((m) => ({ ...m }));
+        if (service === "vacuum_rename_map") maps.find((m) => m.id === data.map_id).custom_name = data.map_name;
+        if (service === "vacuum_delete_map") maps = maps.filter((m) => m.id !== data.map_id);
+        set(`vacuum.${base}`, states[`vacuum.${base}`].state, { maps, ...(service === "vacuum_select_map" ? { selected_map_id: data.map_id } : {}) });
+      }
+      if (domain === "number") set(data.entity_id, data.value);
+      if (domain === "time") set(data.entity_id, data.time);
+      if (service === "vacuum_set_restricted_zone") {
+        restricted = { walls: data.walls || [], zones: data.zones || [], no_mops: data.no_mops || [] };
+        refreshCamera();
+      }
+      if (service === "vacuum_rename_segment") {
+        rooms[data.segment_id].name = data.segment_name;
+        refreshCamera();
+      }
+      if (service === "vacuum_set_cleaning_sequence") {
+        data.cleaning_sequence.forEach((id, i) => (rooms[id].order = i + 1));
+        refreshCamera();
+      }
+      if (service === "vacuum_set_custom_cleaning") {
+        data.segment_id.forEach((id, i) =>
+          Object.assign(rooms[id], {
+            suction_level: data.suction_level[i],
+            water_volume: data.water_volume[i],
+            cleaning_times: data.repeats[i],
+            ...(data.cleaning_mode ? { cleaning_mode: data.cleaning_mode[i] } : {}),
+          })
+        );
+        refreshCamera();
+      }
+      if (service === "vacuum_merge_segments") {
+        const [a, b] = data.segments.map((id) => rooms[id]);
+        Object.assign(a, { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) });
+        fixRoom(data.segments[0], a);
+        delete rooms[data.segments[1]];
+        setTimeout(() => { refreshCamera(); push(); }, 800);
+      }
+      if (service === "vacuum_split_segments") {
+        const r = rooms[data.segment];
+        const [lx0, ly0, lx1, ly1] = data.line;
+        const id = Math.max(...Object.keys(rooms).map(Number)) + 1;
+        const n = { ...r, name: `Room ${id}`, icon: "mdi:home-outline", color: palette[id % palette.length] };
+        if (Math.abs(lx1 - lx0) < Math.abs(ly1 - ly0)) {
+          const cut = Math.round((lx0 + lx1) / 2);
+          r.x1 = cut; n.x0 = cut;
+        } else {
+          const cut = Math.round((ly0 + ly1) / 2);
+          r.y1 = cut; n.y0 = cut;
+        }
+        fixRoom(data.segment, r);
+        fixRoom(id, n);
+        rooms[id] = n;
+        setTimeout(() => { refreshCamera(); push(); }, 800);
+      }
+      if (domain === "switch") set(data.entity_id, states[data.entity_id].state === "on" ? "off" : "on");
+      push();
+    },
+  });
+  const push = () => (card.hass = hass());
+
+  // move the robot around while cleaning
+  setInterval(() => {
+    if (states[`vacuum.${base}`].state !== "cleaning") return;
+    robot = { x: robot.x + (Math.random() - 0.3) * 900, y: robot.y + (Math.random() - 0.3) * 900 };
+    robot.x = Math.max(-5400, Math.min(7400, robot.x));
+    robot.y = Math.max(-4000, Math.min(4200, robot.y));
+    refreshCamera();
+    set(`sensor.${base}_cleaned_area`, Number(states[`sensor.${base}_cleaned_area`].state) + 1);
+    push();
+  }, 3000);
+
+  document.querySelectorAll("[data-sim]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const s = b.dataset.sim;
+      if (s === "lowfilter") set(`sensor.${base}_filter_left`, states[`sensor.${base}_filter_left`].state === "3" ? 7 : 3);
+      else if (s === "notank") set(`sensor.${base}_water_tank`, states[`sensor.${base}_water_tank`].state === "installed" ? "not_installed" : "installed");
+      else setVac(s);
+      push();
+    })
+  );
+  card.addEventListener("hass-notification", (e) => (log.textContent = `toast: ${e.detail.message}\n` + log.textContent));
+  card.addEventListener("hass-more-info", (e) => (log.textContent = `more-info: ${e.detail.entityId}\n` + log.textContent));
+
+  await import("../dreame-d10s-card.js");
+  customElements.upgrade(card);
+  const params = new URLSearchParams(location.search);
+  const layout = params.get("layout") || "compact";
+  document.querySelector("main").classList.toggle("panel", layout === "panel");
+  card.setConfig({ entity: `vacuum.${base}`, layout });
+  document.querySelectorAll("[data-layout]").forEach((b) =>
+    b.addEventListener("click", () => (location.search = `?layout=${b.dataset.layout}`))
+  );
+  push();
+  document.getElementById("card-host").appendChild(card);
+</script>
+</body>
+</html>
