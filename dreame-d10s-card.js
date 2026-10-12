@@ -4,7 +4,7 @@
  * Independent implementation; not affiliated with the official Dreame Vacuum Card.
  */
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.2.1";
 
 const SUCTION_LEVELS = [
   { value: "quiet", label: "Quiet", icon: "mdi:fan-speed-1", code: 0 },
@@ -354,17 +354,24 @@ const normRect = (z) => ({
 
 const STYLE = `
 :host {
-  --dvc-accent: var(--dreame-accent-color, #1ea0d7);
-  --dvc-accent-text: #fff;
-  --dvc-surface: var(--ha-card-background, var(--card-background-color, #1c1c1c));
-  --dvc-surface-2: rgba(127,127,127,0.14);
+  /* follow the active theme; --dreame-accent-color still overrides */
+  --dvc-accent: var(--dreame-accent-color, var(--primary-color, #1ea0d7));
+  --dvc-accent-text: var(--dreame-accent-text-color, #fff);
+  /* solid surface for menus and dropdowns (glass themes keep this opaque) */
+  --dvc-menu: var(--md-menu-container-color, var(--card-background-color, #1c1c1c));
+  /* sheets use the dialog surface, so glass themes give them their frosted look */
+  --dvc-popup: var(--ha-dialog-surface-background, var(--dvc-menu));
+  --dvc-popup-filter: var(--ha-dialog-surface-backdrop-filter, none);
+  --dvc-radius: var(--ha-card-border-radius, 12px);
+  --dvc-surface-2: var(--frosted-glass-control-surface, rgba(127,127,127,0.14));
   --dvc-surface-3: rgba(127,127,127,0.24);
+  --dvc-warn: var(--warning-color, #e0a000);
   --dvc-text: var(--primary-text-color, #e1e1e1);
   --dvc-text-2: var(--secondary-text-color, #9b9b9b);
   --dvc-danger: var(--error-color, #db4437);
   display: block;
 }
-ha-card { overflow: hidden; position: relative; color: var(--dvc-text); background: var(--dvc-surface); }
+ha-card { overflow: hidden; position: relative; color: var(--dvc-text); }
 .header { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; padding: 12px 8px 4px; }
 .titles { text-align: center; min-width: 0; }
 .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -449,7 +456,7 @@ svg.lines .inactive .hit { pointer-events: none; }
 .pill.danger { background: var(--dvc-danger); }
 .pill[disabled] { opacity: .45; cursor: default; }
 
-.menu { position: absolute; right: 10px; top: 46px; z-index: 5; background: var(--dvc-surface); border-radius: 10px;
+.menu { position: absolute; right: 10px; top: 46px; z-index: 5; background: var(--dvc-menu); border-radius: 12px;
   box-shadow: 0 6px 24px rgba(0,0,0,.4); padding: 6px 0; min-width: 190px; border: 1px solid var(--dvc-surface-3); }
 .menu button { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: none; color: var(--dvc-text); padding: 10px 16px; font-size: 14px; cursor: pointer; text-align: left; }
 .menu button:hover { background: var(--dvc-surface-2); }
@@ -457,7 +464,8 @@ svg.lines .inactive .hit { pointer-events: none; }
 .menu ha-icon { --mdc-icon-size: 20px; color: var(--dvc-text-2); }
 
 .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 6; display: flex; align-items: flex-end; }
-.sheet { width: 100%; max-height: 92%; overflow: auto; background: var(--dvc-surface); border-radius: 16px 16px 0 0; padding: 6px 16px 18px; box-sizing: border-box;
+.sheet { width: 100%; max-height: 92%; overflow: auto; background: var(--dvc-popup); backdrop-filter: var(--dvc-popup-filter);
+  -webkit-backdrop-filter: var(--dvc-popup-filter); border-radius: var(--dvc-radius) var(--dvc-radius) 0 0; padding: 6px 16px 18px; box-sizing: border-box;
   box-shadow: 0 -4px 20px rgba(0,0,0,.35); animation: up .18s ease-out; }
 @keyframes up { from { transform: translateY(30px); opacity: 0; } }
 .sheet-head { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; margin-bottom: 4px; }
@@ -497,8 +505,8 @@ input.text:focus { border-color: var(--dvc-accent); }
 .banner { display: flex; align-items: center; gap: 10px; margin: 4px 12px 8px; padding: 8px 12px; border-radius: 10px; font-size: 13px; cursor: pointer; }
 .banner ha-icon { --mdc-icon-size: 20px; flex: none; }
 .banner .grow { flex: 1; min-width: 0; }
-.banner.error { background: rgba(219,68,55,.16); color: var(--dvc-danger); }
-.banner.warn { background: rgba(255,170,0,.14); color: #e0a000; }
+.banner.error { background: color-mix(in srgb, var(--dvc-danger) 16%, transparent); color: var(--dvc-danger); }
+.banner.warn { background: color-mix(in srgb, var(--dvc-warn) 16%, transparent); color: var(--dvc-warn); }
 .banner.info { background: var(--dvc-surface-2); color: var(--dvc-text-2); }
 
 .obstacle { position: absolute; transform: translate(-50%, -50%) scale(var(--inv)); width: 22px; height: 22px; border-radius: 50%;
@@ -525,6 +533,7 @@ input.text:focus { border-color: var(--dvc-accent); }
 .stat-box b { display: block; font-size: 18px; }
 .stat-box span { font-size: 11px; color: var(--dvc-text-2); }
 select.text, input.text[type=time] { appearance: auto; }
+.ctl option { background: var(--dvc-menu); color: var(--dvc-text); }
 .ctl { flex: none; max-width: 48%; }
 .ctl input[type=range] { width: 120px; accent-color: var(--dvc-accent); vertical-align: middle; }
 .ctl .v { font-size: 12px; color: var(--dvc-text-2); min-width: 34px; display: inline-block; text-align: right; }

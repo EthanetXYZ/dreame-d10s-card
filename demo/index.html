@@ -16,6 +16,38 @@
   main.panel { grid-template-columns: 1fr; max-width: 1200px; }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
   ha-card { display: block; border-radius: 12px; }
+  /* Frosted Glass theme values (light / dark) for testing */
+  body.frosted-light {
+    --primary-text-color: rgba(19, 21, 54, 0.98); --secondary-text-color: rgba(19, 21, 54, 0.8);
+    --primary-color: rgb(106, 116, 211); --error-color: rgb(234, 114, 135); --warning-color: rgb(255, 219, 117);
+    --frosted-glass-menu-surface: rgb(254, 244, 242); --frosted-glass-control-surface: rgba(254, 244, 242, 0.32);
+    --frosted-glass-popup-surface: rgba(254, 244, 242, 0.35);
+    --card-background-color: var(--frosted-glass-menu-surface); --md-menu-container-color: var(--frosted-glass-menu-surface);
+    --ha-card-background: transparent; --ha-card-border-radius: 18px;
+    --ha-card-border: 0.5px solid rgba(255, 255, 255, 0.3);
+    --ha-card-box-shadow: 0 10px 32px rgba(21, 25, 45, 0.12), 0 2px 8px rgba(21, 25, 45, 0.08);
+    --ha-card-backdrop-filter: blur(8px) saturate(1.25);
+    --ha-dialog-surface-background: var(--frosted-glass-popup-surface);
+    --ha-dialog-surface-backdrop-filter: blur(18px) saturate(1.2);
+    background: linear-gradient(135deg, #f4c7b8, #c9cdf2 45%, #f6e3c3); color: var(--primary-text-color);
+  }
+  body.frosted-dark {
+    --primary-text-color: rgba(234, 235, 238, 0.98); --secondary-text-color: rgba(234, 235, 238, 0.8);
+    --primary-color: rgb(122, 162, 190); --error-color: rgb(234, 114, 135); --warning-color: rgb(255, 219, 117);
+    --frosted-glass-menu-surface: rgb(2, 6, 11); --frosted-glass-control-surface: rgba(2, 6, 11, 0.32);
+    --frosted-glass-popup-surface: rgba(2, 6, 11, 0.35);
+    --card-background-color: var(--frosted-glass-menu-surface); --md-menu-container-color: var(--frosted-glass-menu-surface);
+    --ha-card-background: transparent; --ha-card-border-radius: 18px;
+    --ha-card-border: 0.5px solid rgba(234, 235, 238, 0.22);
+    --ha-card-box-shadow: 0 14px 38px rgba(0, 0, 0, 0.34), 0 2px 10px rgba(0, 0, 0, 0.24);
+    --ha-card-backdrop-filter: blur(10px) saturate(1.25);
+    --ha-dialog-surface-background: var(--frosted-glass-popup-surface);
+    --ha-dialog-surface-backdrop-filter: blur(18px) saturate(1.2);
+    background: radial-gradient(circle at 20% 20%, #23415e, transparent 50%), radial-gradient(circle at 80% 70%, #4a2d55, transparent 50%), #0b1018;
+    color: var(--primary-text-color);
+  }
+  body.frosted-light .panel, body.frosted-dark .panel { background: var(--frosted-glass-control-surface); backdrop-filter: blur(10px); }
+  body.frosted-light .panel button, body.frosted-dark .panel button { background: var(--frosted-glass-control-surface); }
   .panel { background: #1c1c1c; border-radius: 12px; padding: 12px 14px; font-size: 13px; }
   .panel h2 { font-size: 14px; margin: 0 0 8px; font-weight: 500; }
   .panel button { background: #2c2c2c; color: inherit; border: 0; border-radius: 8px; padding: 6px 10px; margin: 0 6px 6px 0; cursor: pointer; }
@@ -37,6 +69,10 @@
     <h2 style="margin-top:10px">Layout</h2>
     <button data-layout="compact">Compact</button>
     <button data-layout="panel">Panel</button>
+    <h2 style="margin-top:10px">Theme</h2>
+    <button data-theme="default">Default</button>
+    <button data-theme="frosted-light">Frosted Glass light</button>
+    <button data-theme="frosted-dark">Frosted Glass dark</button>
     <h2 style="margin-top:10px">Service calls</h2>
     <pre id="log"></pre>
   </div>
@@ -398,17 +434,58 @@
   card.addEventListener("hass-notification", (e) => (log.textContent = `toast: ${e.detail.message}\n` + log.textContent));
   card.addEventListener("hass-more-info", (e) => (log.textContent = `more-info: ${e.detail.entityId}\n` + log.textContent));
 
+  const params = new URLSearchParams(location.search);
+  // what HA's ha-card does, plus the theme's card-mod glass layer
+  const HA_CARD_CSS = `ha-card { display: block; background: var(--ha-card-background, var(--card-background-color, #1c1c1c));
+    border-radius: var(--ha-card-border-radius, 12px); border: var(--ha-card-border, none); box-shadow: var(--ha-card-box-shadow, none); }`;
+  const CARD_MOD_CSS = `ha-card { background: transparent; position: relative; isolation: isolate; }
+    ha-card::before { content: ""; position: absolute; inset: 0; backdrop-filter: var(--ha-card-backdrop-filter);
+      -webkit-backdrop-filter: var(--ha-card-backdrop-filter); z-index: -1; pointer-events: none; border-radius: inherit; }`;
+  const theme = params.get("theme") || "default";
+  document.body.className = theme === "default" ? "" : theme;
+  const injectCardStyles = () => {
+    const root = card.shadowRoot;
+    if (!root || root.getElementById("demo-ha-card")) return;
+    const st = document.createElement("style");
+    st.id = "demo-ha-card";
+    st.textContent = HA_CARD_CSS + (theme.startsWith("frosted") ? CARD_MOD_CSS : "");
+    root.appendChild(st);
+  };
+  document.querySelectorAll("[data-theme]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const q = new URLSearchParams(location.search);
+      q.set("theme", b.dataset.theme);
+      location.search = q.toString();
+    })
+  );
+
   await import("../dreame-d10s-card.js");
   customElements.upgrade(card);
-  const params = new URLSearchParams(location.search);
   const layout = params.get("layout") || "compact";
   document.querySelector("main").classList.toggle("panel", layout === "panel");
   card.setConfig({ entity: `vacuum.${base}`, layout });
   document.querySelectorAll("[data-layout]").forEach((b) =>
-    b.addEventListener("click", () => (location.search = `?layout=${b.dataset.layout}`))
+    b.addEventListener("click", () => {
+      const q = new URLSearchParams(location.search);
+      q.set("layout", b.dataset.layout);
+      location.search = q.toString();
+    })
   );
   push();
   document.getElementById("card-host").appendChild(card);
+  injectCardStyles();
+
+  // optional starting state, used for README screenshots: ?mode=room&rooms=4,6 &sheet=settings &editor=nogo &fp=1
+  if (params.get("fp") === "1") card._setFloorPlan(true);
+  else if (params.get("fp") === "0") card._setFloorPlan(false);
+  if (params.get("mode")) card._mode = params.get("mode");
+  if (params.get("rooms")) card._selectedRooms = params.get("rooms").split(",").map(Number);
+  if (params.get("sheet")) card._sheet = params.get("sheet");
+  if (params.get("editor")) setTimeout(() => card._openEditor(params.get("editor")), 300);
+  if (params.get("clean") === "1") setVac("cleaning");
+  if (params.get("bare") === "1") document.querySelector(".panel").style.display = "none";
+  push();
+  card._render(true);
 </script>
 </body>
 </html>
