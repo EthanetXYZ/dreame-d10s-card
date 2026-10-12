@@ -4,7 +4,17 @@
  * Independent implementation; not affiliated with the official Dreame Vacuum Card.
  */
 
-const CARD_VERSION = "1.2.1";
+const CARD_VERSION = "1.2.2";
+
+// 1.10.0 > 1.9.3; leading "v" ignored
+const cmpVersion = (a, b) => {
+  const pa = String(a || "").replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || "").replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0) ? 1 : -1;
+  }
+  return 0;
+};
 
 const SUCTION_LEVELS = [
   { value: "quiet", label: "Quiet", icon: "mdi:fan-speed-1", code: 0 },
@@ -593,10 +603,28 @@ class DreameD10sCard extends HTMLElement {
       });
     }
     this._ro?.observe(this);
+    // close the ⋮ menu on a tap anywhere outside the card (taps inside are handled in _onClick)
+    if (!this._outsideTap) {
+      this._outsideTap = (ev) => {
+        if (this._menu && !ev.composedPath().includes(this)) this._closeMenu();
+      };
+      this._escKey = (ev) => {
+        if (ev.key === "Escape" && this._menu) this._closeMenu();
+      };
+    }
+    window.addEventListener("pointerdown", this._outsideTap, true);
+    window.addEventListener("keydown", this._escKey);
   }
 
   disconnectedCallback() {
     this._ro?.disconnect();
+    window.removeEventListener("pointerdown", this._outsideTap, true);
+    window.removeEventListener("keydown", this._escKey);
+  }
+
+  _closeMenu() {
+    this._menu = false;
+    this._render(true);
   }
 
   static getStubConfig(hass) {
@@ -822,6 +850,7 @@ class DreameD10sCard extends HTMLElement {
       this._id("select", "cleaning_mode"),
       this._id("select", "selected_map"),
       this._fpOn ? this._mapDataEntity?.entity_id : null,
+      this._hacsUpdate?.entity_id,
       ...CONSUMABLES.map((c) => this._id("sensor", c[0])),
       ...SWITCHES.map((s) => this._id("switch", s[0])),
     ];
@@ -1758,16 +1787,32 @@ class DreameD10sCard extends HTMLElement {
       out.push(["info", "mdi:floor-plan", "Floor plan view needs the Map Data camera", "Enable camera …_map_data in the device page", "fp-off"]);
     else if (this._fpOn && this._fpError && !this._fp)
       out.push(["info", "mdi:floor-plan", "Couldn't load the floor plan", this._fpError, "fp-off"]);
-    return out
-      .slice(0, 3)
+    const upd = this._updateBanner();
+    return [...out.slice(0, upd ? 2 : 3), ...(upd ? [upd] : [])]
       .map(
-        ([cls, icon, title, sub, target]) => `
+        ([cls, icon, title, sub, target, action]) => `
         <div class="banner ${cls}" data-act="banner" data-target="${esc(target)}">
           ${this._icon(icon)}<div class="grow"><div>${esc(title)}</div>${sub ? `<div class="sub" style="font-size:11px;opacity:.8">${esc(sub)}</div>` : ""}</div>
-          ${this._icon("mdi:chevron-right")}
+          ${action ? `<span class="link-btn">${esc(action)}</span>` : this._icon("mdi:chevron-right")}
         </div>`
       )
       .join("");
+  }
+
+  /* ----- "refresh to finish updating" notice ----- */
+
+  // HACS's update entity for this card, if it was installed through HACS
+  get _hacsUpdate() {
+    return Object.values(this._hass?.states || {}).find(
+      (s) => s.entity_id.startsWith("update.") && /dreame d10s card/i.test(s.attributes.friendly_name || s.attributes.title || "")
+    );
+  }
+
+  // After HACS installs a new version the browser keeps running the old file until it reloads.
+  _updateBanner() {
+    const installed = this._hacsUpdate?.attributes?.installed_version;
+    if (!installed || cmpVersion(installed, CARD_VERSION) <= 0) return null;
+    return ["info", "mdi:refresh", `Updated to ${installed.replace(/^v/i, "")}`, "Refresh the page to finish updating", "reload", "Refresh"];
   }
 
   _mapHtml() {
@@ -2483,6 +2528,7 @@ class DreameD10sCard extends HTMLElement {
       case "banner": {
         const target = el.dataset.target;
         if (target === "fp-off") return this._setFloorPlan(false);
+        if (target === "reload") return location.reload();
         if (target.startsWith("sheet:")) {
           this._sheet = target.slice(6);
           return this._render(true);

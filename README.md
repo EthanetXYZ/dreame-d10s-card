@@ -60,11 +60,12 @@ The card only shows what your robot reports. Anything the D10S doesn't support s
 
 HACS adds the dashboard resource for you and will offer updates when new versions are released.
 
-### Manual
+### Updating
 
-1. Download `dreame-d10s-card.js` from the [latest release](https://github.com/EthanetXYZ/dreame-d10s-card/releases/latest) and copy it to `<config>/www/`.
-2. Go to **Settings → Dashboards → ⋮ → Resources → Add resource**, enter `/local/dreame-d10s-card.js` and choose **JavaScript module**.
-3. Refresh your browser.
+Update from **Settings → Updates** or from HACS. Once the update has installed, the card shows **"Updated to …"** with a **Refresh** button. Press it to load the new version; no Home Assistant restart is needed. In the companion app, if a refresh isn't enough, use **Settings → Companion app → Debugging → Reset frontend cache**.
+
+HACS checks for new versions every few hours. To see a new release sooner, restart Home Assistant, or open the card in HACS and choose **⋮ → Redownload**.
+
 
 ## Adding the card
 

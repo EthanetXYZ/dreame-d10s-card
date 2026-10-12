@@ -318,7 +318,17 @@
   const card = document.createElement("dreame-d10s-card");
   const category = (id) =>
     /_(dnd|volume|voice|time|child_lock|carpet|resume|obstacle|customized)/.test(id) ? "config" : /_(wifi|first_cleaning|cleaning_count|total_)/.test(id) ? "diagnostic" : null;
+  // HACS's update entity for the card; ?installed=1.3.0 pretends a newer version was just installed
+  {
+    const installed = new URLSearchParams(location.search).get("installed") || "v1.2.2";
+    set("update.dreame_d10s_card_update", "off", {
+      friendly_name: "Dreame D10S Card update",
+      installed_version: installed,
+      latest_version: installed,
+    });
+  }
   const hass = () => ({
+    user: { is_admin: true, name: "Demo" },
     states: { ...states },
     entities: Object.fromEntries(
       Object.keys(states).map((id) => [id, { entity_id: id, device_id: "dev1", entity_category: category(id) }])
