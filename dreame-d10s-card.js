@@ -4,7 +4,7 @@
  * Independent implementation; not affiliated with the official Dreame Vacuum Card.
  */
 
-const CARD_VERSION = "1.2.3";
+const CARD_VERSION = "1.3.0";
 
 // 1.10.0 > 1.9.3; leading "v" ignored
 // where this file was loaded from (HACS adds ?hacstag=…), used to refresh the cached copy
@@ -50,7 +50,7 @@ const CONSUMABLES = [
 const SWITCHES = [
   ["carpet_boost", "Carpet boost", "mdi:rug"],
   ["resume_cleaning", "Resume after charging", "mdi:play-circle-outline"],
-  ["obstacle_avoidance", "Obstacle avoidance", "mdi:sign-caution"],
+  ["tight_mopping", "Tight mopping", "mdi:view-grid-outline"],
   ["customized_cleaning", "Customized room cleaning", "mdi:home-edit-outline"],
   ["child_lock", "Child lock", "mdi:lock-outline"],
 ];
@@ -479,7 +479,8 @@ svg.lines .inactive .hit { pointer-events: none; }
 .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 6; display: flex; align-items: flex-end; }
 .sheet { width: 100%; max-height: 92%; overflow: auto; background: var(--dvc-popup); backdrop-filter: var(--dvc-popup-filter);
   -webkit-backdrop-filter: var(--dvc-popup-filter); border-radius: var(--dvc-radius) var(--dvc-radius) 0 0; padding: 6px 16px 18px; box-sizing: border-box;
-  box-shadow: 0 -4px 20px rgba(0,0,0,.35); animation: up .18s ease-out; }
+  box-shadow: 0 -4px 20px rgba(0,0,0,.35); }
+.sheet.opening { animation: up .18s ease-out; }
 @keyframes up { from { transform: translateY(30px); opacity: 0; } }
 .sheet-head { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; margin-bottom: 4px; }
 .sheet-head .t { text-align: center; font-weight: 500; }
@@ -505,6 +506,18 @@ svg.lines .inactive .hit { pointer-events: none; }
 .toggle.on::after { left: 19px; }
 .link-btn { border: 0; background: var(--dvc-surface-2); color: var(--dvc-text); border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
 .note { font-size: 11px; color: var(--dvc-text-2); margin-top: 6px; line-height: 1.4; }
+.dialog-scrim { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.5); display: grid; place-items: center; padding: 16px;
+  animation: fade .12s ease-out; }
+@keyframes fade { from { opacity: 0; } }
+.dialog { width: min(400px, 100%); background: var(--dvc-popup); backdrop-filter: var(--dvc-popup-filter); -webkit-backdrop-filter: var(--dvc-popup-filter);
+  color: var(--dvc-text); border-radius: var(--ha-dialog-border-radius, 24px); padding: 24px 24px 16px; box-sizing: border-box;
+  box-shadow: 0 12px 40px rgba(0,0,0,.4); font-family: var(--ha-font-family-body, inherit); }
+.dialog h2 { margin: 0 0 12px; font-size: 20px; font-weight: 400; }
+.dialog p { margin: 0; font-size: 14px; color: var(--dvc-text-2); line-height: 1.5; }
+.dialog .btns { justify-content: flex-end; margin-top: 24px; gap: 8px; }
+.dialog .btns button { border: 0; background: none; color: var(--dvc-accent); font-size: 14px; font-weight: 500; padding: 10px 14px; border-radius: 999px; cursor: pointer; }
+.dialog .btns button:hover { background: var(--dvc-surface-2); }
+.dialog .btns button.danger { color: var(--dvc-danger); }
 .legend { display: flex; justify-content: center; gap: 14px; font-size: 11px; color: var(--dvc-text-2); padding-top: 8px; flex-wrap: wrap; }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; background: rgb(var(--c)); }
 input.text { width: 100%; box-sizing: border-box; background: var(--dvc-surface-2); color: var(--dvc-text); border: 1px solid var(--dvc-surface-3);
@@ -625,6 +638,45 @@ class DreameD10sCard extends HTMLElement {
     window.removeEventListener("keydown", this._escKey);
   }
 
+  // Resolves true/false. Lives outside ha-card so card updates don't remove it.
+  _confirm(text, { title = "Are you sure?", ok = "OK", danger = false } = {}) {
+    this._dialogDone?.(false);
+    return new Promise((resolve) => {
+      const wrap = document.createElement("div");
+      wrap.className = "dialog-scrim";
+      wrap.innerHTML = `
+        <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-t" aria-describedby="dlg-d">
+          <h2 id="dlg-t">${esc(title)}</h2>
+          <p id="dlg-d">${esc(text)}</p>
+          <div class="btns">
+            <button data-r="0">Cancel</button>
+            <button data-r="1" class="${danger ? "danger" : ""}">${esc(ok)}</button>
+          </div>
+        </div>`;
+      const done = (result) => {
+        window.removeEventListener("keydown", onKey, true);
+        wrap.remove();
+        this._dialogDone = null;
+        resolve(result);
+      };
+      const onKey = (ev) => {
+        if (ev.key === "Escape") {
+          ev.stopPropagation();
+          done(false);
+        }
+      };
+      wrap.addEventListener("click", (ev) => {
+        const b = ev.composedPath().find((n) => n.dataset?.r);
+        if (b) done(b.dataset.r === "1");
+        else if (ev.composedPath()[0] === wrap) done(false);
+      });
+      window.addEventListener("keydown", onKey, true);
+      this._dialogDone = done;
+      this.shadowRoot.appendChild(wrap);
+      wrap.querySelector('[data-r="1"]').focus();
+    });
+  }
+
   _closeMenu() {
     this._menu = false;
     this._render(true);
@@ -702,7 +754,7 @@ class DreameD10sCard extends HTMLElement {
     if (key === this._renderKey) return;
     this._renderKey = key;
     // don't rebuild the DOM under a finger or while typing
-    if (this._gesture || this._pointers.size || this.shadowRoot.activeElement?.tagName === "INPUT") {
+    if (this._gesture || this._pointers.size || ["INPUT", "SELECT"].includes(this.shadowRoot.activeElement?.tagName)) {
       this._pendingRender = true;
       return;
     }
@@ -973,9 +1025,15 @@ class DreameD10sCard extends HTMLElement {
     this._render(true);
   }
 
-  _closeEditor(force) {
+  async _closeEditor(force) {
     const ed = this._editor;
-    if (!force && ed && (ed.dirty || ed.order.length) && !confirm("Discard unsaved map changes?")) return;
+    if (
+      !force &&
+      ed &&
+      (ed.dirty || ed.order.length) &&
+      !(await this._confirm("Your unsaved map changes will be lost.", { title: "Discard changes?", ok: "Discard", danger: true }))
+    )
+      return;
     this._editor = null;
     this._render(true);
   }
@@ -1042,7 +1100,13 @@ class DreameD10sCard extends HTMLElement {
     const [a, b] = this._editor.rooms;
     const ra = this._room(a);
     const rb = this._room(b);
-    if (!confirm(`Merge "${ra?.name}" and "${rb?.name}"?`)) return;
+    if (
+      !(await this._confirm(`"${ra?.name}" and "${rb?.name}" will become one room. This can't be undone from the card.`, {
+        title: "Merge rooms?",
+        ok: "Merge",
+      }))
+    )
+      return;
     const data = { segments: [a, b] };
     if (this._mapId) data.map_id = this._mapId;
     try {
@@ -1059,6 +1123,8 @@ class DreameD10sCard extends HTMLElement {
     const line = this._editor.split[0];
     const seg = this._editor.rooms[0];
     if (!line || !seg) return;
+    const name = this._room(seg)?.name || "this room";
+    if (!(await this._confirm(`${name} will be split into two rooms along the line.`, { title: "Split room?", ok: "Split" }))) return;
     const data = { segment: seg, line: this._lineToVacuum(line, this._transform) };
     if (this._mapId) data.map_id = this._mapId;
     try {
@@ -1585,6 +1651,9 @@ class DreameD10sCard extends HTMLElement {
       return;
     }
     const oldImg = card.querySelector(".viewport img");
+    const sameSheet = this._sheet === this._lastSheet;
+    const scroll = sameSheet ? [".sheet", ".side-body"].map((sel) => card.querySelector(sel)?.scrollTop || 0) : [0, 0];
+    this._lastSheet = this._sheet;
     const focused = this.shadowRoot.activeElement;
     const focusId = focused?.tagName === "INPUT" ? focused.id : null;
     this._maybeFetchFloorPlan();
@@ -1618,8 +1687,12 @@ class DreameD10sCard extends HTMLElement {
         </div>`;
       card.innerHTML = `<div class="layout"><div class="main">${main}</div>${side}</div>`;
     } else {
-      card.innerHTML = `${main}${sheetBody ? `<div class="scrim" data-act="close-sheet"><div class="sheet">${sheetBody}</div></div>` : ""}`;
+      card.innerHTML = `${main}${sheetBody ? `<div class="scrim" data-act="close-sheet"><div class="sheet ${sameSheet ? "" : "opening"}">${sheetBody}</div></div>` : ""}`;
     }
+    [".sheet", ".side-body"].forEach((sel, i) => {
+      const el = card.querySelector(sel);
+      if (el && scroll[i]) el.scrollTop = scroll[i];
+    });
     let img = card.querySelector(".viewport img");
     if (img && oldImg) {
       // reuse the existing element so the map doesn't flash while a new frame loads
@@ -1693,7 +1766,7 @@ class DreameD10sCard extends HTMLElement {
       () => {
         if (this._pendingRender) {
           setTimeout(() => {
-            if (this.shadowRoot.activeElement?.tagName === "INPUT") return;
+            if (["INPUT", "SELECT"].includes(this.shadowRoot.activeElement?.tagName)) return;
             this._pendingRender = false;
             this._render(true);
           }, 0);
@@ -1712,7 +1785,7 @@ class DreameD10sCard extends HTMLElement {
     const name = this._config.title || vac.attributes.friendly_name || "Dreame D10S";
     const err = this._st(this._id("sensor", "error"));
     const hasErr = err && !["no_error", "unavailable", "unknown"].includes(err.state);
-    const status = this._st(this._id("sensor", "status"));
+    const status = this._st(this._id("sensor", "state")) || this._st(this._id("sensor", "status"));
     let sub = status ? this._fmt(status) : this._fmt(vac);
     if (hasErr) sub = this._fmt(err);
     else if (this._state === "cleaning" && vac.attributes.current_segment) {
@@ -1772,7 +1845,15 @@ class DreameD10sCard extends HTMLElement {
     const err = this._st(this._id("sensor", "error"));
     if (err && !["no_error", "unavailable", "unknown"].includes(err.state)) {
       const desc = err.attributes.description || err.attributes.faults || "";
-      out.push(["error", "mdi:alert-circle-outline", this._fmt(err), typeof desc === "string" ? desc : "", err.entity_id]);
+      const clear = this._st(this._id("button", "clear_warning"));
+      out.push([
+        "error",
+        "mdi:alert-circle-outline",
+        this._fmt(err),
+        typeof desc === "string" ? desc : "",
+        clear ? `press:${clear.entity_id}` : err.entity_id,
+        clear ? "Clear" : null,
+      ]);
     }
     const tank = this._st(this._id("sensor", "water_tank"));
     const mode = this._st(this._id("select", "cleaning_mode"))?.state;
@@ -2566,6 +2647,8 @@ class DreameD10sCard extends HTMLElement {
           history.pushState(null, "", "/config/lovelace/resources");
           return window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
         }
+        if (target.startsWith("press:"))
+          return this._callService("button", "press", { entity_id: target.slice(6) }).catch(() => {});
         if (target.startsWith("sheet:")) {
           this._sheet = target.slice(6);
           return this._render(true);
@@ -2573,8 +2656,10 @@ class DreameD10sCard extends HTMLElement {
         return this._moreInfo(target);
       }
       case "press":
-        if (el.dataset.confirm && !confirm(el.dataset.confirm)) return;
-        return this._callService("button", "press", { entity_id: el.dataset.entity }).catch(() => {});
+        return (async () => {
+          if (el.dataset.confirm && !(await this._confirm(el.dataset.confirm, { title: "Continue?", ok: "Run" }))) return;
+          this._callService("button", "press", { entity_id: el.dataset.entity }).catch(() => {});
+        })();
       case "room-type":
         return this._setRoomType(this._sheetRoom, Number(el.dataset.value));
       case "obstacle-ignore": {
@@ -2600,17 +2685,23 @@ class DreameD10sCard extends HTMLElement {
           .then(() => this._toast("Map backup saved"))
           .catch(() => {});
       case "map-delete":
-        if (!confirm(`Delete map "${el.dataset.name}"? This can't be undone.`)) return;
-        return this._dreameService("vacuum_delete_map", { map_id: Number(el.dataset.id) }).catch(() => {});
+        return this._confirm(`"${el.dataset.name}" will be deleted from the robot. This can't be undone.`, {
+          title: "Delete map?",
+          ok: "Delete",
+          danger: true,
+        }).then((yes) => yes && this._dreameService("vacuum_delete_map", { map_id: Number(el.dataset.id) }).catch(() => {}));
       case "map-restore": {
         ev.stopPropagation();
-        if (!confirm(`Restore "${el.dataset.label}"? The current map will be replaced.`)) return;
         const data = { recovery_map_index: Number(el.dataset.index) };
         const mapId = this._vac.attributes.selected_map_id ?? this._mapId;
         if (mapId) data.map_id = mapId;
-        return this._dreameService("vacuum_restore_map", data)
-          .then(() => this._toast("Map restored — it will refresh shortly"))
-          .catch(() => {});
+        return this._confirm(`The current map will be replaced with "${el.dataset.label}".`, { title: "Restore map?", ok: "Restore" }).then(
+          (yes) =>
+            yes &&
+            this._dreameService("vacuum_restore_map", data)
+              .then(() => this._toast("Map restored — it will refresh shortly"))
+              .catch(() => {})
+        );
       }
       case "select":
         return this._callService("select", "select_option", { entity_id: el.dataset.entity, option: el.dataset.value }).catch(() => {});
@@ -2620,9 +2711,10 @@ class DreameD10sCard extends HTMLElement {
         this._repeats = Number(el.dataset.value);
         return this._render(true);
       case "reset":
-        if (confirm(`Reset ${el.dataset.label}?`))
-          this._dreameService("vacuum_reset_consumable", { consumable: el.dataset.value }).catch(() => {});
-        return;
+        return this._confirm(`Only reset this after fitting a new ${el.dataset.label.toLowerCase()}.`, {
+          title: `Reset ${el.dataset.label.toLowerCase()}?`,
+          ok: "Reset",
+        }).then((yes) => yes && this._dreameService("vacuum_reset_consumable", { consumable: el.dataset.value }).catch(() => {}));
 
       /* editor */
       case "editor-open":
@@ -2633,14 +2725,20 @@ class DreameD10sCard extends HTMLElement {
         if (!ed) return;
         return ed.tool === "order" ? this._saveOrder() : this._saveRestricted();
       case "tool":
-        if (ed.tool === "order" && el.dataset.tool !== "order") {
-          if (ed.order.length && !confirm("Discard the new cleaning order?")) return;
-          ed.order = [];
-        }
-        ed.tool = el.dataset.tool;
-        ed.splitting = false;
-        ed.split = [];
-        return this._render(true);
+        return (async () => {
+          if (ed.tool === "order" && el.dataset.tool !== "order") {
+            if (
+              ed.order.length &&
+              !(await this._confirm("The order you've tapped so far won't be saved.", { title: "Discard cleaning order?", ok: "Discard", danger: true }))
+            )
+              return;
+            ed.order = [];
+          }
+          ed.tool = el.dataset.tool;
+          ed.splitting = false;
+          ed.split = [];
+          this._render(true);
+        })();
       case "shape-add": {
         const img = this.shadowRoot.querySelector(".viewport img");
         // drop it in the middle of what's currently visible
@@ -2650,10 +2748,14 @@ class DreameD10sCard extends HTMLElement {
         return this._render(true);
       }
       case "shape-clear":
-        if (!confirm("Remove all of these on the map?")) return;
-        ed.shapes = ed.shapes.filter((s) => s.kind !== ed.tool);
-        ed.dirty = true;
-        return this._render(true);
+        return this._confirm("They'll be removed from the map when you press Save.", { title: "Remove all?", ok: "Remove", danger: true }).then(
+          (yes) => {
+            if (!yes) return;
+            ed.shapes = ed.shapes.filter((s) => s.kind !== ed.tool);
+            ed.dirty = true;
+            this._render(true);
+          }
+        );
       case "order-reset":
         ed.order = [];
         return this._render(true);

@@ -275,7 +275,9 @@
       ? Promise.resolve(new Response(JSON.stringify(mapDataJson()), { headers: { "Content-Type": "application/json" } }))
       : realFetch(url, opts);
   refreshCamera();
-  set(`sensor.${base}_status`, "charging_completed");
+  set(`sensor.${base}_status`, "sleeping");
+  set(`sensor.${base}_state`, "charging_completed");
+  set(`button.${base}_clear_warning`, "unknown", { icon: "mdi:alert-remove-outline" });
   set(`sensor.${base}_error`, "no_error");
   set(`sensor.${base}_battery_level`, 100, { icon: "mdi:battery-charging-100" });
   set(`sensor.${base}_cleaned_area`, 56);
@@ -291,7 +293,7 @@
   });
   set(`switch.${base}_carpet_boost`, "on");
   set(`switch.${base}_resume_cleaning`, "on");
-  set(`switch.${base}_obstacle_avoidance`, "on");
+  set(`switch.${base}_tight_mopping`, "on");
   set(`switch.${base}_child_lock`, "off");
   set(`switch.${base}_customized_cleaning`, "off");
   set(`switch.${base}_dnd`, "on", { icon: "mdi:minus-circle-off-outline" });
@@ -310,7 +312,8 @@
   const statusFor = { docked: "charging_completed", cleaning: "sweeping_and_mopping", paused: "paused", returning: "returning", error: "error" };
   function setVac(state) {
     set(`vacuum.${base}`, state);
-    set(`sensor.${base}_status`, statusFor[state] || state);
+    set(`sensor.${base}_status`, state === "docked" ? "sleeping" : statusFor[state] || state);
+    set(`sensor.${base}_state`, statusFor[state] || state);
     set(`sensor.${base}_error`, state === "error" ? "wheels_are_suspended" : "no_error");
   }
 
